@@ -12,6 +12,10 @@ const PATCHABLE_SETTINGS_KEYS = new Set([
   'scannerPreferMatchedMetadata',
   'scannerDisableWatcher',
   'downloadImportEnabled',
+  'downloadImportCleanupEnabled',
+  'downloadImportCleanupMinRatio',
+  'downloadImportCleanupMinSeedHours',
+  'downloadImportWebhookUrl',
   'storeCoverWithItem',
   'storeMetadataWithItem',
   'allowIframe',
@@ -45,6 +49,13 @@ class ServerSettings {
 
     // Download import engine (server/downloadImport) - master switch, off by default
     this.downloadImportEnabled = false
+    // Source cleanup (decision D4) - off by default; a source is only ever
+    // removed after verified import AND client-side source completeness
+    this.downloadImportCleanupEnabled = false
+    this.downloadImportCleanupMinRatio = 0
+    this.downloadImportCleanupMinSeedHours = 0
+    // Webhook for import events (n8n -> Telegram); empty = disabled
+    this.downloadImportWebhookUrl = ''
 
     // Metadata - choose to store inside users library item folder
     this.storeCoverWithItem = false
@@ -125,6 +136,10 @@ class ServerSettings {
     this.scannerPreferMatchedMetadata = !!settings.scannerPreferMatchedMetadata
     this.scannerDisableWatcher = !!settings.scannerDisableWatcher
     this.downloadImportEnabled = !!settings.downloadImportEnabled
+    this.downloadImportCleanupEnabled = !!settings.downloadImportCleanupEnabled
+    this.downloadImportCleanupMinRatio = !isNaN(settings.downloadImportCleanupMinRatio) ? Number(settings.downloadImportCleanupMinRatio) : 0
+    this.downloadImportCleanupMinSeedHours = !isNaN(settings.downloadImportCleanupMinSeedHours) ? Number(settings.downloadImportCleanupMinSeedHours) : 0
+    this.downloadImportWebhookUrl = typeof settings.downloadImportWebhookUrl === 'string' ? settings.downloadImportWebhookUrl : ''
 
     this.storeCoverWithItem = !!settings.storeCoverWithItem
     this.storeMetadataWithItem = !!settings.storeMetadataWithItem
@@ -243,6 +258,10 @@ class ServerSettings {
       scannerPreferMatchedMetadata: this.scannerPreferMatchedMetadata,
       scannerDisableWatcher: this.scannerDisableWatcher,
       downloadImportEnabled: this.downloadImportEnabled,
+      downloadImportCleanupEnabled: this.downloadImportCleanupEnabled,
+      downloadImportCleanupMinRatio: this.downloadImportCleanupMinRatio,
+      downloadImportCleanupMinSeedHours: this.downloadImportCleanupMinSeedHours,
+      downloadImportWebhookUrl: this.downloadImportWebhookUrl,
       storeCoverWithItem: this.storeCoverWithItem,
       storeMetadataWithItem: this.storeMetadataWithItem,
       metadataFileFormat: this.metadataFileFormat,

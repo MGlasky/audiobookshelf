@@ -78,6 +78,24 @@ const CLIENT_QUALIFIER_POLL_SECONDS = 30
 /** Socket event emitted whenever a queue row is created or updated. */
 const QUEUE_EVENT_NAME = 'download_import_queue_updated'
 
+/** Default milliseconds between source-cleanup sweeps over imported rows. */
+const CLEANUP_SWEEP_INTERVAL_MS = 15 * 60 * 1000
+
+/**
+ * Webhook event names emitted by the import pipeline (Feature Blueprint,
+ * stage 4). Consumers: Mike's n8n flow → Task-a-Tron 9000 → Telegram.
+ *
+ * @typedef {'import_success'|'import_review_needed'|'import_failure'} DownloadImportWebhookEvent
+ */
+const WEBHOOK_EVENTS = {
+  IMPORT_SUCCESS: 'import_success',
+  IMPORT_REVIEW_NEEDED: 'import_review_needed',
+  IMPORT_FAILURE: 'import_failure'
+}
+
+/** Default milliseconds before a webhook delivery gives up. */
+const WEBHOOK_TIMEOUT_MS = 10000
+
 module.exports = {
   DownloadImportStatus,
   isTransientStatus,
@@ -87,5 +105,8 @@ module.exports = {
   WATCH_BATCH_DELAY_MS,
   STABILITY_TIMEOUT_MS,
   CLIENT_QUALIFIER_POLL_SECONDS,
-  QUEUE_EVENT_NAME
+  QUEUE_EVENT_NAME,
+  CLEANUP_SWEEP_INTERVAL_MS,
+  WEBHOOK_EVENTS,
+  WEBHOOK_TIMEOUT_MS
 }
