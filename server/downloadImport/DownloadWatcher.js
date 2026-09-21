@@ -23,6 +23,7 @@ const STABILITY_POLL_MS = STABILITY_POLL_INTERVAL_SECONDS * 1000
  * @property {number} totalSizeBytes
  * @property {number} maxMtimeMs newest mtime of any file within
  * @property {number} audioFileCount files with a supported audio extension
+ * @property {number} audioTotalSizeBytes combined size of supported audio files
  * @property {string[]} tempFiles paths of in-progress artifacts (".part", ".!qB", "_UNPACK")
  */
 
@@ -38,7 +39,7 @@ const STABILITY_POLL_MS = STABILITY_POLL_INTERVAL_SECONDS * 1000
 async function snapshotDirectory(dirPath, maxFiles = 100000) {
   if (!(await fs.pathExists(dirPath))) return null
 
-  const snapshot = { fileCount: 0, totalSizeBytes: 0, maxMtimeMs: 0, audioFileCount: 0, tempFiles: [] }
+  const snapshot = { fileCount: 0, totalSizeBytes: 0, maxMtimeMs: 0, audioFileCount: 0, audioTotalSizeBytes: 0, tempFiles: [] }
 
   /**
    * @param {string} current
@@ -66,7 +67,10 @@ async function snapshotDirectory(dirPath, maxFiles = 100000) {
       snapshot.maxMtimeMs = Math.max(snapshot.maxMtimeMs, stat.mtimeMs)
       if (isTempArtifactName(entry)) snapshot.tempFiles.push(entryPath)
       const ext = Path.extname(entry).slice(1).toLowerCase()
-      if (ext && globals.SupportedAudioTypes.includes(ext)) snapshot.audioFileCount++
+      if (ext && globals.SupportedAudioTypes.includes(ext)) {
+        snapshot.audioFileCount++
+        snapshot.audioTotalSizeBytes += Number(stat.size || 0)
+      }
     }
     return true
   }
