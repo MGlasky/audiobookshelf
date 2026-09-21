@@ -250,6 +250,7 @@ describe('downloadImport/DownloadImportManager', () => {
       const library = fakeLibrary({ settings: librarySettings(overrides) })
       const scanner = fakeScanner()
       const manager = new DownloadImportManager({ db: fakeDb(library), scanner, matchAdapter: fakeMatch(matchResult) })
+      openManagers.push(manager)
       return { manager, scanner }
     }
 
