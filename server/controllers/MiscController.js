@@ -160,6 +160,24 @@ class MiscController {
       return res.status(400).send('allowedOrigins must be an array')
     }
 
+    // Download-import cleanup thresholds must be non-negative numbers
+    for (const numericKey of ['downloadImportCleanupMinRatio', 'downloadImportCleanupMinSeedHours']) {
+      if (filteredUpdate[numericKey] !== undefined) {
+        const value = Number(filteredUpdate[numericKey])
+        if (Number.isNaN(value) || value < 0) {
+          return res.status(400).send(`${numericKey} must be a non-negative number`)
+        }
+      }
+    }
+
+    // Webhook target must be http(s) or empty (disabled)
+    if (filteredUpdate.downloadImportWebhookUrl !== undefined) {
+      const webhookUrl = String(filteredUpdate.downloadImportWebhookUrl || '').trim()
+      if (webhookUrl && !/^https?:\/\//i.test(webhookUrl)) {
+        return res.status(400).send('downloadImportWebhookUrl must be an http(s) URL')
+      }
+    }
+
     const madeUpdates = Database.serverSettings.update(filteredUpdate)
     if (madeUpdates) {
       await Database.updateServerSettings()

@@ -39,6 +39,8 @@ class DownloadImportQueue extends Model {
     this.errorStage
     /** @type {string|null} */
     this.errorReason
+    /** @type {Date|null} when the source directory was removed by cleanup (decision D4) */
+    this.cleanedUpAt
     /** @type {number} processing attempts */
     this.attempts
     /** @type {Date} */
@@ -85,6 +87,10 @@ class DownloadImportQueue extends Model {
         },
         errorReason: {
           type: DataTypes.STRING,
+          allowNull: true
+        },
+        cleanedUpAt: {
+          type: DataTypes.DATE,
           allowNull: true
         },
         attempts: {
