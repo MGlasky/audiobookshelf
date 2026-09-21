@@ -62,7 +62,7 @@ class LibraryItemScanner {
 
     let libraryItemDataUpdated = await libraryItemScanData.checkLibraryItemData(libraryItem, scanLogger)
 
-    const { libraryItem: expandedLibraryItem, wasUpdated } = await this.rescanLibraryItemMedia(libraryItem, libraryItemScanData, library.settings, scanLogger)
+    const { libraryItem: expandedLibraryItem, wasUpdated } = await this.rescanLibraryItemMedia(libraryItem, libraryItemScanData, library.librarySettings, scanLogger)
     if (libraryItemDataUpdated || wasUpdated) {
       SocketAuthority.libraryItemEmitter('item_updated', expandedLibraryItem)
 
@@ -216,7 +216,7 @@ class LibraryItemScanner {
     scanLogger.verbose = true
     scanLogger.setData('libraryItem', libraryItemScanData.relPath)
 
-    const newLibraryItem = await this.scanNewLibraryItem(libraryItemScanData, library.settings, scanLogger)
+    const newLibraryItem = await this.scanNewLibraryItem(libraryItemScanData, library.librarySettings, scanLogger)
     // Watcher path does not go through full-library scan cleanup — emit author book count updates here
     await BookScanner.emitAuthorsNumBooksUpdated(library.id, scanLogger)
     return newLibraryItem
