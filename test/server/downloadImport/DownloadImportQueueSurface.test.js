@@ -215,7 +215,7 @@ describe('downloadImport/queue surface', () => {
       const { manager, rows } = setupQueue([{ sourcePath: Path.join(watchRoot, 'low-conf'), releaseName: 'low-conf', status: DownloadImportStatus.ERROR, errorStage: 'qualify', errorReason: 'never mind' }])
 
       const emitted = []
-      manager.queueChangeListener = (event, queueItem) => emitted.push({ event, queueItem })
+      manager.onQueueChange = (queueItem) => emitted.push(queueItem)
 
       const updated = await manager.searchQueueItem(rows[0].id, { title: 'better title', author: 'better author' })
 
@@ -225,7 +225,7 @@ describe('downloadImport/queue surface', () => {
       expect(updated.matchData.searchAuthor).to.equal('better author')
       expect(updated.matchData.manual).to.equal(true)
       expect(emitted).to.have.lengthOf(1)
-      expect(emitted[0].queueItem.id).to.equal(rows[0].id)
+      expect(emitted[0].id).to.equal(rows[0].id)
     })
 
     it('keeps an existing Match review row in Match review', async () => {

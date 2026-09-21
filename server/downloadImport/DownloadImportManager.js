@@ -5,7 +5,7 @@ const fileUtils = require('../utils/fileUtils')
 const LibraryModel = require('../models/Library')
 const LibraryItemScanner = require('../scanner/LibraryItemScanner')
 
-const { DownloadImportStatus, QUEUE_EVENT_NAME, STABILITY_POLL_INTERVAL_SECONDS, STABILITY_TIMEOUT_MS } = require('./constants')
+const { DownloadImportStatus, STABILITY_POLL_INTERVAL_SECONDS, STABILITY_TIMEOUT_MS } = require('./constants')
 const { parseReleaseName } = require('./ReleaseParser')
 const { MatchAdapter, estimateDurationMinutes } = require('./MatchAdapter')
 const { buildImportPlan, executeImport } = require('./Importer')
@@ -67,8 +67,8 @@ class DownloadImportManager {
     this.enabledLibraries = new Map()
     /** @type {Set<string>} "libraryId:sourcePath" keys currently processing */
     this.inFlight = new Set()
-    /** Optional listener for queue changes (Server.js wires SocketAuthority here). */
-    this.queueChangeListener = null
+    /** Listener for queue changes (Server.js wires SocketAuthority here). */
+    this.onQueueChange = null
 
     this.db = deps.db || Database
     this.scanner = deps.scanner || LibraryItemScanner
@@ -207,9 +207,9 @@ class DownloadImportManager {
    * @param {Object} queueItem
    */
   emitQueueChange(queueItem) {
-    if (!this.queueChangeListener) return
+    if (!this.onQueueChange) return
     try {
-      this.queueChangeListener(QUEUE_EVENT_NAME, queueItem)
+      this.onQueueChange(queueItem)
     } catch (error) {
       Logger.error(`[DownloadImport] Queue change listener failed: ${error.message}`)
     }
