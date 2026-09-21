@@ -300,6 +300,7 @@ class LibraryController {
     let hasUpdates = false
     let hasUpdatedDisableWatcher = false
     let hasUpdatedScanCron = false
+    let hasUpdatedDownloadImport = false
     if (req.body.settings) {
       for (const key in req.body.settings) {
         if (!Object.keys(defaultLibrarySettings).includes(key)) {
