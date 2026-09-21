@@ -168,6 +168,13 @@ class MiscController {
       if (filteredUpdate.backupSchedule !== undefined) {
         this.backupManager.updateCronSchedule()
       }
+
+      // Download-import engine follows the master switch live (no restart)
+      if (filteredUpdate.downloadImportEnabled !== undefined && this.downloadImportManager) {
+        this.downloadImportManager.refreshFromLibraries().catch((error) => {
+          Logger.error(`[MiscController] Download-import refresh failed: ${error.message}`)
+        })
+      }
     }
     return res.json({
       serverSettings: Database.serverSettings.toJSONForBrowser()

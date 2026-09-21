@@ -85,11 +85,55 @@ class DownloadImportManager {
       return
     }
     await this.refreshFromLibraries()
+    await this.recoverInterruptedRows()
   }
 
   /** @returns {boolean} whether the engine is enabled at the server level */
   isEnabled() {
     return Boolean(this.db.serverSettings?.downloadImportEnabled)
+  }
+
+  /**
+   * Restart recovery: rows left in transient states when the server stopped
+   * have no in-memory timers left, so without this they would sit forever -
+   * every state must keep its defined exit (Feature Blueprint, queue state
+   * model). Re-enter transient rows into the pipeline; Match review and
+   * terminal rows keep waiting for the user (or history) by design.
+   * @returns {Promise<void>}
+   */
+  async recoverInterruptedRows() {
+    const interrupted = await this.db.downloadImportQueueModel.findAll({
+      where: {
+        status: [
+          DownloadImportStatus.DETECTED,
+          DownloadImportStatus.QUALIFYING,
+          DownloadImportStatus.IDENTIFYING,
+          DownloadImportStatus.NORMALIZING,
+          DownloadImportStatus.IMPORTING
+        ]
+      }
+    })
+    if (!interrupted.length) return
+
+    Logger.info(`[DownloadImport] Recovering ${interrupted.length} interrupted queue row(s) after restart`)
+    for (const queueItem of interrupted) {
+      const config = this.enabledLibraries.get(queueItem.libraryId)
+      if (!config) {
+        Logger.warn(`[DownloadImport] Row "${queueItem.releaseName}" has no configured library - leaving it ${queueItem.status}`)
+        continue
+      }
+      if (this.inFlight.has(`${queueItem.libraryId}:${queueItem.sourcePath}`)) continue
+
+      this.inFlight.add(`${queueItem.libraryId}:${queueItem.sourcePath}`)
+      try {
+        await this.processQueueItem(queueItem, config)
+      } catch (error) {
+        Logger.error(`[DownloadImport] Recovery failed for "${queueItem.releaseName}": ${error.message}`)
+        await this.finishWithError(queueItem, 'recovery', error.message)
+      } finally {
+        this.inFlight.delete(`${queueItem.libraryId}:${queueItem.sourcePath}`)
+      }
+    }
   }
 
   /**
@@ -540,6 +584,42 @@ class DownloadImportManager {
     queueItem.parsedMetadata = queueItem.parsedMetadata || parseReleaseName(queueItem.releaseName)
 
     return this.importQueueItem(queueItem, config, queueItem.parsedMetadata)
+  }
+
+  /**
+   * Refine search: re-run the provider search with explicit search strings
+   * and refresh the stored candidates. The row stays in Match review until a
+   * candidate or ASIN is picked - searching never imports.
+   *
+   * @param {string} queueItemId
+   * @param {Object} payload { title, author }
+   * @returns {Promise<Object>} refreshed row
+   */
+  async searchQueueItem(queueItemId, payload) {
+    const queueItem = await this.db.downloadImportQueueModel.findByPk(queueItemId)
+    if (!queueItem) throw new Error('Queue item not found')
+    if (queueItem.status === DownloadImportStatus.IMPORTED) throw new Error('Item already imported')
+
+    const config = this.enabledLibraries.get(queueItem.libraryId)
+    if (!config) throw new Error('Library is no longer configured for download import')
+
+    const title = String(payload.title || '').trim()
+    const author = String(payload.author || '').trim()
+    if (!title && !author) throw new Error('Provide a title or author to search')
+
+    const matchResult = await this.matchAdapter.search({ title, author }, { provider: 'audible' })
+    queueItem.matchData = {
+      candidates: matchResult.candidates,
+      searchTitle: matchResult.searchTitle,
+      searchAuthor: matchResult.searchAuthor,
+      manual: true
+    }
+    if (queueItem.status !== DownloadImportStatus.MATCH_REVIEW) {
+      queueItem.status = DownloadImportStatus.MATCH_REVIEW
+    }
+    await queueItem.save()
+    this.emitQueueChange(queueItem)
+    return queueItem
   }
 }
 
