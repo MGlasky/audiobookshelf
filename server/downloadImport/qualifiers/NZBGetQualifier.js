@@ -120,6 +120,60 @@ class NZBGetQualifier {
       return { qualified: false, reason: 'client_unreachable', detail: error.message, transient: true }
     }
   }
+
+  /**
+   * Decision D4 removal gate: may the verified-import source be deleted?
+   * True only when the release has a complete NZBGet history entry - the
+   * download left the queue, finished post-processing, and par verification
+   * was clean. No history entry (still queued, or deleted) means the source
+   * can never be confirmed complete on the client side.
+   *
+   * @param {Object} candidate { dirPath, name, client }
+   * @returns {Promise<SourceRemovalResult>}
+   */
+  async isSourceRemovable(candidate) {
+    const config = candidate.client || {}
+    const baseUrl = String(config.url || '').replace(/\/+$/, '')
+    if (!baseUrl) {
+      return { removable: false, reason: 'no_client', detail: 'No URL configured' }
+    }
+
+    try {
+      const history = await this.rpc(baseUrl, 'history', config, [0, 100])
+      if (!Array.isArray(history)) {
+        throw new Error('unexpected history response')
+      }
+
+      const wantedDir = normalizePathForCompare(candidate.dirPath)
+      const wantedName = String(candidate.name || candidate.releaseName || '')
+      const entry = history.find((h) => {
+        if (normalizePathForCompare(h.DestDir) === wantedDir) return true
+        return h.NZBName === wantedName
+      })
+
+      if (!entry) {
+        return {
+          removable: false,
+          reason: 'not_in_history',
+          detail: `No NZBGet history entry for "${wantedName}" - cannot confirm source is complete`
+        }
+      }
+
+      const status = String(entry.Status || '').toUpperCase()
+      const parStatus = String(entry.ParStatus || 'NONE').toUpperCase()
+      if (!NZBGetQualifier.OK_STATUSES.includes(parStatus)) {
+        return { removable: false, reason: 'par_failed', detail: `NZBGet history: par verification ${parStatus}` }
+      }
+      if (status !== 'SUCCESS' && status !== 'SUCCESS_WARNING') {
+        return { removable: false, reason: 'failed', detail: `NZBGet history status: ${status}` }
+      }
+
+      return { removable: true, reason: 'complete_history', detail: `NZBGet history: ${status}` }
+    } catch (error) {
+      Logger.error(`[DownloadImport] NZBGet cleanup check error: ${error.message}`)
+      return { removable: false, reason: 'client_unreachable', detail: error.message }
+    }
+  }
 }
 
 module.exports = NZBGetQualifier

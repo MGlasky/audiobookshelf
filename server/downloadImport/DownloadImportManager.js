@@ -1,16 +1,18 @@
 const Path = require('path')
 const Logger = require('../Logger')
 const Database = require('../Database')
+const fs = require('../libs/fsExtra')
 const fileUtils = require('../utils/fileUtils')
 const LibraryModel = require('../models/Library')
 const LibraryItemScanner = require('../scanner/LibraryItemScanner')
 
-const { DownloadImportStatus, STABILITY_POLL_INTERVAL_SECONDS, STABILITY_TIMEOUT_MS } = require('./constants')
+const { DownloadImportStatus, STABILITY_POLL_INTERVAL_SECONDS, STABILITY_TIMEOUT_MS, CLEANUP_SWEEP_INTERVAL_MS, WEBHOOK_EVENTS } = require('./constants')
 const { parseReleaseName } = require('./ReleaseParser')
 const { MatchAdapter, estimateDurationMinutes } = require('./MatchAdapter')
 const { buildImportPlan, executeImport } = require('./Importer')
 const { DownloadWatcher, waitForDirectoryStability, snapshotDirectory } = require('./DownloadWatcher')
-const { qualifyCandidate } = require('./qualifiers/index')
+const { qualifyCandidate, checkSourceRemovable } = require('./qualifiers/index')
+const DownloadImportWebhook = require('./WebhookNotifier')
 
 /**
  * Orchestrates the download-import pipeline:
@@ -59,6 +61,7 @@ class DownloadImportManager {
    * @param {Object} [deps] test overrides
    * @param {Object} [deps.db] Database-like (defaults to the Database singleton)
    * @param {Object} [deps.scanner] scanner with scanPotentialNewLibraryItem
+   * @param {Object} [deps.notifier] webhook notifier with send(event, queueItem)
    */
   constructor(deps = {}) {
     /** @type {DownloadWatcher|null} */
@@ -69,10 +72,13 @@ class DownloadImportManager {
     this.inFlight = new Set()
     /** Listener for queue changes (Server.js wires SocketAuthority here). */
     this.onQueueChange = null
+    /** @type {NodeJS.Timeout|null} periodic source-cleanup sweep timer */
+    this.cleanupTimer = null
 
     this.db = deps.db || Database
     this.scanner = deps.scanner || LibraryItemScanner
     this.matchAdapter = deps.matchAdapter || new MatchAdapter(deps.bookFinder || undefined)
+    this.notifier = deps.notifier || new DownloadImportWebhook({ db: this.db })
   }
 
   /**
@@ -86,6 +92,144 @@ class DownloadImportManager {
     }
     await this.refreshFromLibraries()
     await this.recoverInterruptedRows()
+    this.startCleanupSweep()
+  }
+
+  /**
+   * Periodic source-cleanup sweep (decision D4). The timer runs while the
+   * engine is enabled; each pass re-reads the cleanup setting, so toggling
+   * the setting takes effect without a restart. Seed requirements are met
+   * long after the import itself, so the sweep - not the import moment - is
+   * when deletions actually happen.
+   */
+  startCleanupSweep() {
+    if (this.cleanupTimer) return
+    this.cleanupTimer = setInterval(() => {
+      this.runCleanupSweep().catch((error) => {
+        Logger.error(`[DownloadImport] Cleanup sweep failed: ${error.message}`)
+      })
+    }, CLEANUP_SWEEP_INTERVAL_MS)
+    // Never hold the process open just for cleanup (mocha exits, tests, shutdown)
+    this.cleanupTimer.unref?.()
+  }
+
+  /** Stop the cleanup sweep timer. */
+  stop() {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer)
+      this.cleanupTimer = null
+    }
+  }
+
+  /**
+   * Source-cleanup configuration from server settings.
+   *
+   * @returns {{ enabled: boolean, minRatio: number, minSeedHours: number }}
+   */
+  cleanupConfig() {
+    const settings = this.db.serverSettings || {}
+    return {
+      enabled: !!settings.downloadImportCleanupEnabled,
+      minRatio: Number(settings.downloadImportCleanupMinRatio) || 0,
+      minSeedHours: Number(settings.downloadImportCleanupMinSeedHours) || 0
+    }
+  }
+
+  /**
+   * Fire-and-forget webhook delivery. The notifier never rejects; this catch
+   * is the boundary so a programming error in delivery cannot touch the pipeline.
+   *
+   * @param {DownloadImportWebhookEvent} event
+   * @param {Object} queueItem
+   */
+  notify(event, queueItem) {
+    try {
+      this.notifier.send(event, queueItem).catch((error) => {
+        Logger.error(`[DownloadImport] Webhook notification "${event}" failed: ${error.message}`)
+      })
+    } catch (error) {
+      Logger.error(`[DownloadImport] Webhook notification "${event}" failed: ${error.message}`)
+    }
+  }
+
+  /**
+   * Decision D4: remove an imported row's source directory when, and only
+   * when, every gate holds. Deletion never runs as default behavior, never
+   * without a download client to confirm source completeness, and never as
+   * an unconditional batch - each row is confirmed individually.
+   *
+   * @param {Object} queueItem
+   * @param {Object|null} config enabled-library config
+   * @returns {Promise<{ removed: boolean, reason: string, detail: string|null }>}
+   */
+  async attemptSourceCleanup(queueItem, config) {
+    const cleanup = this.cleanupConfig()
+    if (!cleanup.enabled) return { removed: false, reason: 'disabled', detail: null }
+    if (queueItem.status !== DownloadImportStatus.IMPORTED) return { removed: false, reason: 'not_imported', detail: null }
+    if (queueItem.cleanedUpAt) return { removed: false, reason: 'already_cleaned', detail: null }
+    if (!config?.clientConfig?.type) {
+      return { removed: false, reason: 'no_client', detail: 'No download client configured - sources on filesystem-only roots are never deleted' }
+    }
+
+    const sourcePath = fileUtils.filePathToPOSIX(queueItem.sourcePath)
+    const destinationPath = queueItem.destinationPath ? fileUtils.filePathToPOSIX(queueItem.destinationPath) : null
+    // Guard against a misconfiguration where deleting the source would
+    // destroy the imported material itself
+    if (destinationPath && (destinationPath === sourcePath || destinationPath.startsWith(`${sourcePath}/`) || sourcePath.startsWith(`${destinationPath}/`))) {
+      Logger.error(`[DownloadImport] Refusing cleanup for "${queueItem.releaseName}": source ${sourcePath} overlaps destination ${destinationPath}`)
+      return { removed: false, reason: 'unsafe_path', detail: 'Source overlaps the import destination' }
+    }
+
+    if (!(await fs.pathExists(sourcePath))) {
+      return { removed: false, reason: 'source_missing', detail: null }
+    }
+
+    const removal = await checkSourceRemovable(
+      { name: queueItem.releaseName, path: sourcePath },
+      config.clientConfig,
+      { minRatio: cleanup.minRatio, minSeedHours: cleanup.minSeedHours }
+    )
+    if (!removal.removable) {
+      Logger.debug(`[DownloadImport] Cleanup held for "${queueItem.releaseName}": ${removal.reason} (${removal.detail})`)
+      return { removed: false, reason: removal.reason, detail: removal.detail }
+    }
+
+    await fs.remove(sourcePath)
+    queueItem.cleanedUpAt = new Date()
+    await queueItem.save()
+    this.emitQueueChange(queueItem)
+    Logger.info(`[DownloadImport] Cleaned up source "${queueItem.releaseName}": ${sourcePath} (${removal.detail})`)
+    return { removed: true, reason: 'removed', detail: removal.detail }
+  }
+
+  /**
+   * Sweep imported rows whose sources are still present and ask the download
+   * client whether each source may be removed. Only rows already IMPORTED are
+   * considered - cleanup never runs ahead of a verified import.
+   *
+   * @returns {Promise<{ checked: number, removed: number }>}
+   */
+  async runCleanupSweep() {
+    if (!this.cleanupConfig().enabled) return { checked: 0, removed: 0 }
+
+    const rows = await this.db.downloadImportQueueModel.findAll({
+      where: { status: DownloadImportStatus.IMPORTED, cleanedUpAt: null }
+    })
+    let removed = 0
+    for (const row of rows) {
+      const config = this.enabledLibraries.get(row.libraryId)
+      if (!config) continue
+      try {
+        const result = await this.attemptSourceCleanup(row, config)
+        if (result.removed) removed++
+      } catch (error) {
+        Logger.error(`[DownloadImport] Cleanup check failed for "${row.releaseName}": ${error.message}`)
+      }
+    }
+    if (rows.length) {
+      Logger.debug(`[DownloadImport] Cleanup sweep: ${rows.length} imported row(s) checked, ${removed} source(s) removed`)
+    }
+    return { checked: rows.length, removed }
   }
 
   /** @returns {boolean} whether the engine is enabled at the server level */
@@ -349,6 +493,7 @@ class DownloadImportManager {
         queueItem.status = DownloadImportStatus.MATCH_REVIEW
         await queueItem.save()
         this.emitQueueChange(queueItem)
+        this.notify(WEBHOOK_EVENTS.IMPORT_REVIEW_NEEDED, queueItem)
         return queueItem
       }
 
@@ -399,7 +544,13 @@ class DownloadImportManager {
     queueItem.errorReason = null
     await queueItem.save()
     this.emitQueueChange(queueItem)
+    this.notify(WEBHOOK_EVENTS.IMPORT_SUCCESS, queueItem)
     Logger.info(`[DownloadImport] Imported "${queueItem.releaseName}" (${result.mode}, ${result.importedFiles} files) → ${plan.destinationPath}${libraryItem ? '' : ' (scan pending)'}`)
+
+    // Decision D4: the just-verified import is the earliest moment cleanup
+    // may run; the client-side completeness check decides and usually holds
+    // (seed requirements are met long after the import).
+    await this.attemptSourceCleanup(queueItem, config)
     return queueItem
   }
 
@@ -452,6 +603,7 @@ class DownloadImportManager {
     queueItem.errorReason = reason
     await queueItem.save()
     this.emitQueueChange(queueItem)
+    this.notify(WEBHOOK_EVENTS.IMPORT_FAILURE, queueItem)
     return queueItem
   }
 
