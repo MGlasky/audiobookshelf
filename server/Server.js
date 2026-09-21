@@ -19,6 +19,8 @@ const Logger = require('./Logger')
 
 const Auth = require('./Auth')
 const Watcher = require('./Watcher')
+const DownloadImportManager = require('./downloadImport/DownloadImportManager')
+const { QUEUE_EVENT_NAME } = require('./downloadImport/constants')
 const Database = require('./Database')
 const SocketAuthority = require('./SocketAuthority')
 
@@ -200,6 +202,12 @@ class Server {
       Watcher.on('scanFilesChanged', (pendingFileUpdates, pendingTask) => {
         LibraryScanner.scanFilesChanged(pendingFileUpdates, pendingTask)
       })
+    }
+
+    // Download-import engine (inert unless enabled in settings)
+    await this.downloadImportManager.init()
+    this.downloadImportManager.onQueueChange = (queueItem) => {
+      SocketAuthority.adminEmitter(QUEUE_EVENT_NAME, queueItem?.toJSON ? queueItem.toJSON() : queueItem)
     }
   }
 

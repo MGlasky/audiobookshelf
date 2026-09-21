@@ -87,6 +87,11 @@ class DownloadImportManager {
     await this.refreshFromLibraries()
   }
 
+  /** @returns {boolean} whether the engine is enabled at the server level */
+  isEnabled() {
+    return Boolean(this.db.serverSettings?.downloadImportEnabled)
+  }
+
   /**
    * Reload per-library configuration and rebuild watcher subscriptions.
    */
