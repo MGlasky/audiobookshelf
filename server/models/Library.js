@@ -14,6 +14,12 @@ const Logger = require('../Logger')
  * @property {string[]} metadataPrecedence
  * @property {number} markAsFinishedTimeRemaining Time remaining in seconds to mark as finished. (defaults to 10s)
  * @property {number} markAsFinishedPercentComplete Percent complete to mark as finished (0-100). If this is set it will be used over markAsFinishedTimeRemaining.
+ * @property {boolean} downloadImportEnabled Enable the download-import engine for this library
+ * @property {string[]} downloadImportWatchRoots Download directories to watch (must be outside every LibraryFolder)
+ * @property {string|null} downloadImportTargetFolderId LibraryFolder id to materialize imports into (defaults to first folder)
+ * @property {number} downloadImportConfidenceThreshold Minimum BookFinder match confidence (0-1) for automatic import
+ * @property {number} downloadImportStabilityWindowMinutes Minutes the file set must hold stable before a download qualifies
+ * @property {number} downloadImportAssumedBitrateKbps Bitrate used to estimate duration when ffprobe is unavailable
  */
 
 class Library extends Model {
@@ -76,7 +82,13 @@ class Library extends Model {
         onlyShowLaterBooksInContinueSeries: false,
         metadataPrecedence: this.defaultMetadataPrecedence,
         markAsFinishedPercentComplete: null,
-        markAsFinishedTimeRemaining: 10
+        markAsFinishedTimeRemaining: 10,
+        downloadImportEnabled: false,
+        downloadImportWatchRoots: [],
+        downloadImportTargetFolderId: null,
+        downloadImportConfidenceThreshold: 0.8,
+        downloadImportStabilityWindowMinutes: 10,
+        downloadImportAssumedBitrateKbps: 64
       }
     }
   }
