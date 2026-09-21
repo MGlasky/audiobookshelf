@@ -82,8 +82,8 @@ function toCandidate(book) {
 
 class MatchAdapter {
   constructor(bookFinder = null) {
-    /** @type {BookFinder} */
-    this.bookFinder = bookFinder || new BookFinder()
+    // BookFinder's module exports a singleton instance, not the class
+    this.bookFinder = bookFinder || BookFinder
   }
 
   /**
