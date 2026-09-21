@@ -1,5 +1,6 @@
 const nodeGlobals = {
   AbortController: 'readonly',
+  AbortSignal: 'readonly',
   Buffer: 'readonly',
   TextDecoder: 'readonly',
   URL: 'readonly',
@@ -8,6 +9,7 @@ const nodeGlobals = {
   clearInterval: 'readonly',
   clearTimeout: 'readonly',
   console: 'readonly',
+  fetch: 'readonly',
   process: 'readonly',
   setInterval: 'readonly',
   setTimeout: 'readonly',

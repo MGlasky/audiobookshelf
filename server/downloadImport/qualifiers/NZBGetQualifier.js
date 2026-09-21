@@ -74,13 +74,7 @@ class NZBGetQualifier {
         throw new Error('unexpected listgroups response')
       }
 
-      const wantedDir = normalizePathForCompare(candidate.dirPath)
-      const wantedName = String(candidate.releaseName)
-      const group = groups.find((g) => {
-        if (normalizePathForCompare(g.DestDir) === wantedDir) return true
-        // NZBGet may unpack into a subdirectory named after the NZB
-        return normalizePathForCompare(g.DestDir) === normalizePathForCompare(wantedDir.replace(/[\\/]+$/, '')) || g.NZBName === wantedName
-      })
+      const group = findNzbGroup(groups, candidate.dirPath, candidate.releaseName)
 
       if (!group) {
         return {
@@ -114,10 +108,48 @@ class NZBGetQualifier {
         }
       }
 
-      return { qualified: true, reason: 'complete', detail: `NZBGet: ${group.Status || 'done'}` }
+      return { qualified: true, reason: 'complete', detail: `NZBGet: ${group.Status || 'done'}`, clientId: nzbIdentity(group) }
     } catch (error) {
       Logger.error(`[DownloadImport] NZBGet qualifier error: ${error.message}`)
       return { qualified: false, reason: 'client_unreachable', detail: error.message, transient: true }
+    }
+  }
+
+  /**
+   * Resolve the download identity for a candidate directory without applying
+   * completion semantics. History is checked first: a completed download
+   * leaves listgroups and only history retains it durably. Best-effort -
+   * any failure yields a null identity so duplicate suppression falls back
+   * to the conservative (suppress) answer.
+   *
+   * @param {Object} candidate { dirPath, name, client }
+   * @returns {Promise<{ clientId: string|null, clientKind: string|null }>}
+   */
+  async identify(candidate) {
+    const config = candidate.client || {}
+    const baseUrl = String(config.url || '').replace(/\/+$/, '')
+    if (!baseUrl) {
+      return { clientId: null, clientKind: null }
+    }
+
+    const wantedName = String(candidate.name || candidate.releaseName || '')
+    try {
+      const history = await this.rpc(baseUrl, 'history', config, [0, 100])
+      if (Array.isArray(history)) {
+        const entry = findNzbGroup(history, candidate.dirPath, wantedName)
+        if (entry) return { clientId: nzbIdentity(entry), clientKind: this.type }
+      }
+
+      const groups = await this.rpc(baseUrl, 'listgroups', config)
+      if (Array.isArray(groups)) {
+        const group = findNzbGroup(groups, candidate.dirPath, wantedName)
+        if (group) return { clientId: nzbIdentity(group), clientKind: this.type }
+      }
+
+      return { clientId: null, clientKind: this.type }
+    } catch (error) {
+      Logger.error(`[DownloadImport] NZBGet identity probe error: ${error.message}`)
+      return { clientId: null, clientKind: this.type }
     }
   }
 
@@ -144,12 +176,8 @@ class NZBGetQualifier {
         throw new Error('unexpected history response')
       }
 
-      const wantedDir = normalizePathForCompare(candidate.dirPath)
       const wantedName = String(candidate.name || candidate.releaseName || '')
-      const entry = history.find((h) => {
-        if (normalizePathForCompare(h.DestDir) === wantedDir) return true
-        return h.NZBName === wantedName
-      })
+      const entry = findNzbGroup(history, candidate.dirPath, wantedName)
 
       if (!entry) {
         return {
@@ -176,4 +204,37 @@ class NZBGetQualifier {
   }
 }
 
+/**
+ * Download identity for the duplicate-suppression fingerprint (stage 5):
+ * the NZBID, unique per nzb. Older NZBGet deployments without an NZBID fall
+ * back to the release name.
+ *
+ * @param {Object} entry listgroups or history entry
+ * @returns {string|null}
+ */
+function nzbIdentity(entry) {
+  if (entry.NZBID !== undefined && entry.NZBID !== null) return String(entry.NZBID)
+  return entry.NZBName ? String(entry.NZBName) : null
+}
+
+/**
+ * Find the nzb backing a candidate directory. Mirrors the qualifier match:
+ * destination directory first, release name second.
+ *
+ * @param {Object[]} entries listgroups or history entries
+ * @param {string} dirPath
+ * @param {string} releaseName
+ * @returns {Object|undefined}
+ */
+function findNzbGroup(entries, dirPath, releaseName) {
+  const wantedDir = normalizePathForCompare(dirPath)
+  const wantedName = String(releaseName || '')
+  return entries.find((g) => {
+    if (normalizePathForCompare(g.DestDir) === wantedDir) return true
+    return g.NZBName === wantedName
+  })
+}
+
 module.exports = NZBGetQualifier
+module.exports.nzbIdentity = nzbIdentity
+module.exports.findNzbGroup = findNzbGroup

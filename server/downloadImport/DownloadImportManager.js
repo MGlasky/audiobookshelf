@@ -11,7 +11,8 @@ const { parseReleaseName } = require('./ReleaseParser')
 const { MatchAdapter, estimateDurationMinutes } = require('./MatchAdapter')
 const { buildImportPlan, executeImport } = require('./Importer')
 const { DownloadWatcher, waitForDirectoryStability, snapshotDirectory } = require('./DownloadWatcher')
-const { qualifyCandidate, checkSourceRemovable } = require('./qualifiers/index')
+const { qualifyCandidate, identifyCandidate, checkSourceRemovable } = require('./qualifiers/index')
+const { computeFingerprint, resolveImportedResurface } = require('./suppression')
 const DownloadImportWebhook = require('./WebhookNotifier')
 
 /**
@@ -403,6 +404,8 @@ class DownloadImportManager {
           folderId: config.targetFolderId,
           watchRoot: fileUtils.filePathToPOSIX(rootPath),
           sourcePath,
+          clientId: null,
+          fingerprint: computeFingerprint(sourcePath),
           releaseName: Path.basename(sourcePath),
           status: DownloadImportStatus.DETECTED,
           attempts: 0
@@ -418,6 +421,63 @@ class DownloadImportManager {
   }
 
   /**
+   * Stage-5 duplicate suppression gate for an already-imported row that a
+   * watcher event re-surfaced. Suppresses when the download identity is the
+   * same or indeterminate; resets the row for a new download when the client
+   * confirms a different one now occupies the directory.
+   *
+   * @param {Object} queueItem row in IMPORTED status
+   * @param {Object} config enabled-library config
+   * @returns {Promise<boolean>} true when the resurface was suppressed
+   */
+  async checkImportedResurface(queueItem, config) {
+    const identity = await identifyCandidate({ name: queueItem.releaseName, path: queueItem.sourcePath }, config.clientConfig)
+    const decision = resolveImportedResurface(queueItem.clientId, identity)
+
+    if (decision.action === 'new-download') {
+      Logger.info(`[DownloadImport] ${queueItem.releaseName}: new download identity in an already-imported directory - reprocessing`)
+      this.resetForNewDownload(queueItem, identity)
+      await queueItem.save()
+      this.emitQueueChange(queueItem)
+      return false
+    }
+
+    // Same (or indeterminate) download: never import twice. Persist the
+    // identity when this is the first time the client could provide one.
+    if (decision.upgraded) {
+      queueItem.clientId = identity.clientId
+      queueItem.fingerprint = computeFingerprint(queueItem.sourcePath, identity.clientId)
+      await queueItem.save()
+    }
+    Logger.info(`[DownloadImport] ${queueItem.releaseName}: already imported - suppressing duplicate event`)
+    return true
+  }
+
+  /**
+   * Reset a row whose directory now holds a different download (the client
+   * confirmed a changed identity). The row is the single source of queue
+   * state, so the new download takes it over in place - old release
+   * metadata is dropped, identity is re-keyed to the new download.
+   *
+   * @param {Object} queueItem
+   * @param {{ clientId: string|null }} identity new download's identity
+   */
+  resetForNewDownload(queueItem, identity) {
+    queueItem.clientId = identity?.clientId || null
+    queueItem.fingerprint = computeFingerprint(queueItem.sourcePath, queueItem.clientId)
+    queueItem.status = DownloadImportStatus.DETECTED
+    queueItem.parsedMetadata = null
+    queueItem.matchData = null
+    queueItem.confidence = null
+    queueItem.destinationPath = null
+    queueItem.importPlan = null
+    queueItem.errorStage = null
+    queueItem.errorReason = null
+    queueItem.cleanedUpAt = null
+    queueItem.attempts = 0
+  }
+
+  /**
    * Run one processing pass over a queue row.
    *
    * @param {Object} queueItem
@@ -427,6 +487,16 @@ class DownloadImportManager {
   async processQueueItem(queueItem, config) {
     const sourcePath = queueItem.sourcePath
     try {
+      // Stage-5 duplicate suppression: a download that already imported must
+      // never import again. A watcher re-event for a preserved source
+      // directory lands here with the row still in IMPORTED - resolve the
+      // client identity and suppress unless the client confirms a different
+      // download now occupies the same directory.
+      if (queueItem.status === DownloadImportStatus.IMPORTED) {
+        const suppressed = await this.checkImportedResurface(queueItem, config)
+        if (suppressed) return queueItem
+      }
+
       queueItem.attempts = (queueItem.attempts || 0) + 1
 
       // Qualification: filesystem stability first, then optional client check
@@ -452,6 +522,13 @@ class DownloadImportManager {
           return queueItem
         }
         return await this.finishWithError(queueItem, 'qualify', qualifierResult.detail || 'Download client did not qualify this release')
+      }
+
+      // Learn the download identity from the client on first successful
+      // qualification - persisted with the next status save
+      if (!queueItem.clientId && qualifierResult.clientId) {
+        queueItem.clientId = qualifierResult.clientId
+        queueItem.fingerprint = computeFingerprint(sourcePath, qualifierResult.clientId)
       }
 
       // Audio filter: a directory with no supported audio is not a release

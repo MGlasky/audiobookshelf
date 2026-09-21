@@ -5,6 +5,7 @@ const { expect } = require('chai')
 
 const { DownloadImportManager, resolveFolder } = require('../../../server/downloadImport/DownloadImportManager')
 const { DownloadImportStatus } = require('../../../server/downloadImport/constants')
+const { computeFingerprint } = require('../../../server/downloadImport/suppression')
 const LibraryModel = require('../../../server/models/Library')
 
 /**
@@ -19,6 +20,8 @@ function fakeQueueModel() {
     folderId: null,
     watchRoot: null,
     sourcePath: null,
+    clientId: null,
+    fingerprint: null,
     releaseName: null,
     status: DownloadImportStatus.DETECTED,
     parsedMetadata: null,
@@ -372,6 +375,117 @@ describe('downloadImport/DownloadImportManager', () => {
       } catch (error) {
         expect(error.message).to.match(/already imported/)
       }
+    })
+  })
+
+  describe('duplicate suppression (stage 5)', () => {
+    afterEach(() => {
+      delete global.fetch
+    })
+
+    /** qBittorrent Web API stub: a single torrent with the given hash at the source dir. */
+    const mockQBittorrent = (hash) => {
+      global.fetch = async (url) => {
+        if (String(url).endsWith('/api/v2/auth/login')) {
+          return { ok: true, text: async () => 'Ok.', headers: new Map([['set-cookie', 'SID=abc123']]) }
+        }
+        if (String(url).endsWith('/api/v2/torrents/info')) {
+          return {
+            ok: true,
+            json: async () => [{
+              name: 'Robert Jordan - The Eye of the World',
+              state: 'pausedUP',
+              progress: 1,
+              hash,
+              save_path: sourceDir,
+              content_path: sourceDir
+            }]
+          }
+        }
+        throw new Error(`unexpected url ${url}`)
+      }
+    }
+
+    function buildSuppressionManager() {
+      const library = fakeLibrary({
+        settings: librarySettings({
+          downloadImportWatchRoots: [watchRoot],
+          downloadImportClient: { type: 'qbittorrent', url: 'http://qb:8080', username: 'a', password: 'b' }
+        }),
+        libraryFolders: [{ id: 'folder_1', path: Path.join(tmpRoot, 'library') }]
+      })
+      const scanner = fakeScanner()
+      const manager = new DownloadImportManager({ db: fakeDb(library), scanner, matchAdapter: fakeMatch(matchedResult()) })
+      openManagers.push(manager)
+      return { manager, scanner }
+    }
+
+    it('suppresses a duplicate watch event for an imported source (no client configured)', async () => {
+      const library = fakeLibrary({
+        settings: librarySettings({ downloadImportWatchRoots: [watchRoot] }),
+        libraryFolders: [{ id: 'folder_1', path: Path.join(tmpRoot, 'library') }]
+      })
+      const scanner = fakeScanner()
+      const manager = new DownloadImportManager({ db: fakeDb(library), scanner, matchAdapter: fakeMatch(matchedResult()) })
+      openManagers.push(manager)
+      await manager.refreshFromLibraries()
+
+      const first = await manager.handleWatchCandidate(watchRoot, sourceDir)
+      expect(first.status).to.equal(DownloadImportStatus.IMPORTED)
+      expect(scanner.calls).to.have.lengthOf(1)
+
+      // The preserved download directory emits another watcher event
+      const second = await manager.handleWatchCandidate(watchRoot, sourceDir)
+      expect(second.id).to.equal(first.id)
+      expect(second.status).to.equal(DownloadImportStatus.IMPORTED)
+      expect(second.fingerprint).to.equal(first.fingerprint)
+      expect(second.attempts).to.equal(1) // untouched by the suppressed pass
+      expect(scanner.calls).to.have.lengthOf(1)
+    })
+
+    it('suppresses when the client confirms the same download identity', async () => {
+      const { manager, scanner } = buildSuppressionManager()
+      await manager.refreshFromLibraries()
+
+      mockQBittorrent('hash-a')
+      const first = await manager.handleWatchCandidate(watchRoot, sourceDir)
+      expect(first.status).to.equal(DownloadImportStatus.IMPORTED)
+      expect(first.clientId).to.equal('hash-a')
+      expect(first.fingerprint).to.equal(computeFingerprint(first.sourcePath, 'hash-a'))
+      expect(scanner.calls).to.have.lengthOf(1)
+
+      // Same torrent still at the path - another watcher event
+      mockQBittorrent('hash-a')
+      const second = await manager.handleWatchCandidate(watchRoot, sourceDir)
+      expect(second.status).to.equal(DownloadImportStatus.IMPORTED)
+      expect(second.clientId).to.equal('hash-a')
+      expect(scanner.calls).to.have.lengthOf(1)
+    })
+
+    it('reprocesses when the client reports a different download at the same path', async () => {
+      const { manager, scanner } = buildSuppressionManager()
+      await manager.refreshFromLibraries()
+
+      mockQBittorrent('hash-a')
+      const first = await manager.handleWatchCandidate(watchRoot, sourceDir)
+      expect(first.status).to.equal(DownloadImportStatus.IMPORTED)
+      expect(first.clientId).to.equal('hash-a')
+      expect(scanner.calls).to.have.lengthOf(1)
+
+      // The row object is mutable and shared between calls - snapshot the
+      // fingerprint before the second pass so the comparison is meaningful
+      const fingerprintBefore = first.fingerprint
+
+      // The old torrent is removed and a different one lands at the same path
+      mockQBittorrent('hash-b')
+      const second = await manager.handleWatchCandidate(watchRoot, sourceDir)
+      expect(second.id).to.equal(first.id)
+      expect(second.status).to.equal(DownloadImportStatus.IMPORTED)
+      expect(second.clientId).to.equal('hash-b')
+      expect(second.fingerprint).to.not.equal(fingerprintBefore)
+      expect(second.attempts).to.equal(1) // reset for the new download
+      expect(second.matchData.manual).to.equal(false)
+      expect(scanner.calls).to.have.lengthOf(2)
     })
   })
 })
