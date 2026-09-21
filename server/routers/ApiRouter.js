@@ -370,6 +370,7 @@ class ApiRouter {
     this.router.post('/download-import/queue/:id/retry', DownloadImportController.middleware.bind(this), DownloadImportController.retry.bind(this))
     this.router.post('/download-import/queue/:id/dismiss', DownloadImportController.middleware.bind(this), DownloadImportController.dismiss.bind(this))
     this.router.post('/download-import/queue/:id/match', DownloadImportController.middleware.bind(this), DownloadImportController.manualMatch.bind(this))
+    this.router.post('/download-import/queue/:id/search', DownloadImportController.middleware.bind(this), DownloadImportController.search.bind(this))
     this.router.post('/download-import/dry-run', DownloadImportController.middleware.bind(this), DownloadImportController.dryRun.bind(this))
   }
 

@@ -90,6 +90,16 @@
             </ui-tooltip>
           </div>
 
+          <div role="article" :aria-label="$strings.LabelDownloadImportEnabledHelp" class="flex items-center py-2">
+            <ui-toggle-switch :label="$strings.LabelDownloadImportEnabled" v-model="newServerSettings.downloadImportEnabled" :disabled="updatingServerSettings" @input="(val) => updateSettingsKey('downloadImportEnabled', val)" />
+            <ui-tooltip aria-hidden="true" :text="$strings.LabelDownloadImportEnabledHelp">
+              <p class="pl-4">
+                <span id="settings-download-import-enabled">{{ $strings.LabelDownloadImportEnabled }}</span>
+                <span class="material-symbols icon-text">info</span>
+              </p>
+            </ui-tooltip>
+          </div>
+
           <div class="pt-4">
             <h2 class="font-semibold">{{ $strings.HeaderSettingsWebClient }}</h2>
           </div>

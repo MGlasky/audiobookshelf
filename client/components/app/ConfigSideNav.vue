@@ -66,6 +66,11 @@ export default {
           path: '/config/libraries'
         },
         {
+          id: 'config-download-import',
+          title: this.$strings.HeaderDownloadImportQueue,
+          path: '/config/download-import'
+        },
+        {
           id: 'config-users',
           title: this.$strings.HeaderUsers,
           path: '/config/users'

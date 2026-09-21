@@ -175,6 +175,32 @@ class DownloadImportController {
   }
 
   /**
+   * POST: /api/download-import/queue/:id/search
+   * Body: { title, author } - re-run the provider search for a Match review
+   * row ("refine search"); updates candidates without importing.
+   *
+   * @this {import('../routers/ApiRouter')}
+   *
+   * @param {RequestWithUser} req
+   * @param {Response} res
+   */
+  async search(req, res) {
+    const manager = this.downloadImportManager
+    if (!manager) return res.sendStatus(503)
+
+    try {
+      const row = await manager.searchQueueItem(req.params.id, {
+        title: req.body?.title || '',
+        author: req.body?.author || ''
+      })
+      res.json({ queueItem: serializeQueueRow(row) })
+    } catch (error) {
+      Logger.error(`[DownloadImportController] Search failed: ${error.message}`)
+      res.status(400).send({ error: error.message })
+    }
+  }
+
+  /**
    * POST: /api/download-import/dry-run
    * Body: { path, libraryId } - plan an import without writing anything.
    *

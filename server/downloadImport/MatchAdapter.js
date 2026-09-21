@@ -143,6 +143,50 @@ class MatchAdapter {
   }
 
   /**
+   * Run a raw provider search with explicit search strings (the Match review
+   * "refine search" action). No threshold routing - the caller decides what
+   * to do with the candidates.
+   *
+   * @param {Object} payload
+   * @param {string} [payload.title]
+   * @param {string} [payload.author]
+   * @param {Object} [options]
+   * @param {string} [options.provider]
+   * @returns {Promise<MatchResult>}
+   */
+  async search(payload, { provider = 'audible' } = {}) {
+    const searchTitle = String(payload.title || '').trim()
+    const searchAuthor = String(payload.author || '').trim()
+
+    if (!searchTitle && !searchAuthor) {
+      return { status: 'no_matches', confidence: null, candidates: [], searchTitle, searchAuthor, provider, manual: true }
+    }
+
+    let books = []
+    try {
+      books = await this.bookFinder.search(null, provider, searchTitle, searchAuthor, '', '', { maxFuzzySearches: 3 })
+    } catch (error) {
+      Logger.error(`[DownloadImport] Refine search failed: ${error.message}`)
+      books = []
+    }
+
+    const candidates = books.filter((book) => book && typeof book === 'object').map(toCandidate)
+    if (!candidates.length) {
+      return { status: 'no_matches', confidence: null, candidates: [], searchTitle, searchAuthor, provider, manual: true }
+    }
+
+    return {
+      status: 'needs_review',
+      confidence: candidates.reduce((best, candidate) => Math.max(best, candidate.matchConfidence ?? 0), 0) || null,
+      candidates: candidates.sort((a, b) => (b.matchConfidence ?? 0) - (a.matchConfidence ?? 0)),
+      searchTitle,
+      searchAuthor,
+      provider,
+      manual: true
+    }
+  }
+
+  /**
    * Resolve a manual match: an ASIN lookup (via the same isTitleAsin
    * short-circuit) or an explicit candidate pick. Manual decisions skip the
    * threshold.
