@@ -66,6 +66,12 @@ const isTempArtifactName = (name) => {
 /** Default seconds between filesystem stability probes while qualifying. */
 const STABILITY_POLL_INTERVAL_SECONDS = 5
 
+/** Default milliseconds between watcher FS events before a batch flushes into detections. */
+const WATCH_BATCH_DELAY_MS = 10000
+
+/** Default milliseconds before qualification gives up waiting for stability. */
+const STABILITY_TIMEOUT_MS = 3600000
+
 /** Default seconds between download-client qualifier checks while qualifying. */
 const CLIENT_QUALIFIER_POLL_SECONDS = 30
 
@@ -78,6 +84,8 @@ module.exports = {
   isTerminalStatus,
   isTempArtifactName,
   STABILITY_POLL_INTERVAL_SECONDS,
+  WATCH_BATCH_DELAY_MS,
+  STABILITY_TIMEOUT_MS,
   CLIENT_QUALIFIER_POLL_SECONDS,
   QUEUE_EVENT_NAME
 }
