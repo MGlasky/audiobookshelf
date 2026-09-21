@@ -70,6 +70,43 @@ class QBittorrentQualifier {
   }
 
   /**
+   * Download identity for the duplicate-suppression fingerprint (stage 5):
+   * the torrent hash, stable across re-adds to the client. `infohash_v1` is
+   * the fallback for older Web API payloads that omit `hash`.
+   *
+   * @param {Object} torrent torrents/info entry
+   * @returns {string|null}
+   */
+  static downloadIdentity(torrent) {
+    return String(torrent.hash || torrent.infohash_v1 || '') || null
+  }
+
+  /**
+   * Resolve the download identity for a candidate directory without applying
+   * completion semantics. Best-effort: any failure yields a null identity so
+   * duplicate suppression falls back to the conservative (suppress) answer.
+   *
+   * @param {Object} candidate { dirPath, client }
+   * @returns {Promise<{ clientId: string|null, clientKind: string|null }>}
+   */
+  async identify(candidate) {
+    const config = candidate.client || {}
+    const baseUrl = String(config.url || '').replace(/\/+$/, '')
+    if (!baseUrl) {
+      return { clientId: null, clientKind: null }
+    }
+
+    try {
+      const torrents = await this.fetchTorrents(baseUrl, config)
+      const torrent = this.findTorrent(torrents, candidate.dirPath)
+      return { clientId: torrent ? QBittorrentQualifier.downloadIdentity(torrent) : null, clientKind: this.type }
+    } catch (error) {
+      Logger.error(`[DownloadImport] qBittorrent identity probe error: ${error.message}`)
+      return { clientId: null, clientKind: this.type }
+    }
+  }
+
+  /**
    * Login and fetch the torrent list.
    *
    * @param {string} baseUrl
@@ -137,7 +174,7 @@ class QBittorrentQualifier {
       }
 
       if (QBittorrentQualifier.COMPLETE_STATES.includes(torrent.state) && Number(torrent.progress) >= 1) {
-        return { qualified: true, reason: 'complete', detail: `qBittorrent: ${torrent.state}` }
+        return { qualified: true, reason: 'complete', detail: `qBittorrent: ${torrent.state}`, clientId: QBittorrentQualifier.downloadIdentity(torrent) }
       }
 
       if (QBittorrentQualifier.FAILED_STATES.includes(torrent.state)) {

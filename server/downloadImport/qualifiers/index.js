@@ -68,6 +68,31 @@ async function qualifyCandidate(candidate, clientConfig) {
 }
 
 /**
+ * Resolve the download client's identity for a candidate (stage 5 duplicate
+ * suppression): qBittorrent torrent hash, NZBGet NZBID. No completion
+ * semantics - the qualifier's identify probe is best-effort and yields a
+ * null clientId whenever the client cannot answer (none configured, unknown
+ * type, unreachable, download not found). Callers must treat a null
+ * identity as indeterminate, never as "new download".
+ *
+ * @param {Object} candidate raw pipeline candidate ({ name, path })
+ * @param {Object|null} clientConfig null/undefined for filesystem-only roots
+ * @returns {Promise<{ clientId: string|null, clientKind: string|null }>}
+ */
+async function identifyCandidate(candidate, clientConfig) {
+  if (!clientConfig || !clientConfig.type) {
+    return { clientId: null, clientKind: null }
+  }
+
+  const QualifierClass = QUALIFIER_TYPES.get(clientConfig.type)
+  if (!QualifierClass) {
+    return { clientId: null, clientKind: null }
+  }
+
+  return new QualifierClass().identify(buildClientCandidate(candidate, clientConfig))
+}
+
+/**
  * Ask the download client whether a verified-import source may be removed
  * (decision D4). Stricter than qualifyCandidate: qBittorrent must report the
  * seed requirement met, NZBGet must show a complete history entry. When no
@@ -97,5 +122,6 @@ module.exports = {
   isQualifierType,
   buildClientCandidate,
   qualifyCandidate,
+  identifyCandidate,
   checkSourceRemovable
 }

@@ -21,6 +21,10 @@ class DownloadImportQueue extends Model {
     this.watchRoot
     /** @type {string} source directory (never deleted by the engine) */
     this.sourcePath
+    /** @type {string|null} download client identity for this download (torrent hash / NZBID) - stage-5 suppression */
+    this.clientId
+    /** @type {string|null} sha256 of sourcePath + clientId - the duplicate-suppression key */
+    this.fingerprint
     /** @type {string} release folder name as detected */
     this.releaseName
     /** @type {DownloadImportStatus} */
@@ -68,6 +72,14 @@ class DownloadImportQueue extends Model {
         },
         watchRoot: DataTypes.STRING,
         sourcePath: DataTypes.STRING,
+        clientId: {
+          type: DataTypes.STRING,
+          allowNull: true
+        },
+        fingerprint: {
+          type: DataTypes.STRING,
+          allowNull: true
+        },
         releaseName: DataTypes.STRING,
         status: {
           type: DataTypes.STRING,
