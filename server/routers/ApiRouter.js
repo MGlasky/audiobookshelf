@@ -32,6 +32,7 @@ const ToolsController = require('../controllers/ToolsController')
 const RSSFeedController = require('../controllers/RSSFeedController')
 const CustomMetadataProviderController = require('../controllers/CustomMetadataProviderController')
 const MiscController = require('../controllers/MiscController')
+const DownloadImportController = require('../controllers/DownloadImportController')
 const ShareController = require('../controllers/ShareController')
 const StatsController = require('../controllers/StatsController')
 const ApiKeyController = require('../controllers/ApiKeyController')
@@ -55,6 +56,7 @@ class ApiRouter {
     /** @type {import('../managers/EmailManager')} */
     this.emailManager = Server.emailManager
     this.apiCacheManager = Server.apiCacheManager
+    this.downloadImportManager = Server.downloadImportManager
 
     this.router = express()
     this.router.disable('x-powered-by')
@@ -359,6 +361,16 @@ class ApiRouter {
     this.router.patch('/auth-settings', MiscController.updateAuthSettings.bind(this))
     this.router.post('/watcher/update', MiscController.updateWatchedPath.bind(this))
     this.router.get('/logger-data', MiscController.getLoggerData.bind(this))
+    //
+    // Download Import Routes (admin)
+    //
+    this.router.get('/download-import/status', DownloadImportController.middleware.bind(this), DownloadImportController.getStatus.bind(this))
+    this.router.post('/download-import/reload', DownloadImportController.middleware.bind(this), DownloadImportController.reload.bind(this))
+    this.router.get('/download-import/queue', DownloadImportController.middleware.bind(this), DownloadImportController.getQueue.bind(this))
+    this.router.post('/download-import/queue/:id/retry', DownloadImportController.middleware.bind(this), DownloadImportController.retry.bind(this))
+    this.router.post('/download-import/queue/:id/dismiss', DownloadImportController.middleware.bind(this), DownloadImportController.dismiss.bind(this))
+    this.router.post('/download-import/queue/:id/match', DownloadImportController.middleware.bind(this), DownloadImportController.manualMatch.bind(this))
+    this.router.post('/download-import/dry-run', DownloadImportController.middleware.bind(this), DownloadImportController.dryRun.bind(this))
   }
 
   //

@@ -11,6 +11,7 @@ const PATCHABLE_SETTINGS_KEYS = new Set([
   'scannerCoverProvider',
   'scannerPreferMatchedMetadata',
   'scannerDisableWatcher',
+  'downloadImportEnabled',
   'storeCoverWithItem',
   'storeMetadataWithItem',
   'allowIframe',
@@ -41,6 +42,9 @@ class ServerSettings {
     this.scannerCoverProvider = 'google'
     this.scannerPreferMatchedMetadata = false
     this.scannerDisableWatcher = false
+
+    // Download import engine (server/downloadImport) - master switch, off by default
+    this.downloadImportEnabled = false
 
     // Metadata - choose to store inside users library item folder
     this.storeCoverWithItem = false
@@ -120,6 +124,7 @@ class ServerSettings {
     this.scannerParseSubtitle = settings.scannerParseSubtitle
     this.scannerPreferMatchedMetadata = !!settings.scannerPreferMatchedMetadata
     this.scannerDisableWatcher = !!settings.scannerDisableWatcher
+    this.downloadImportEnabled = !!settings.downloadImportEnabled
 
     this.storeCoverWithItem = !!settings.storeCoverWithItem
     this.storeMetadataWithItem = !!settings.storeMetadataWithItem
@@ -237,6 +242,7 @@ class ServerSettings {
       scannerParseSubtitle: this.scannerParseSubtitle,
       scannerPreferMatchedMetadata: this.scannerPreferMatchedMetadata,
       scannerDisableWatcher: this.scannerDisableWatcher,
+      downloadImportEnabled: this.downloadImportEnabled,
       storeCoverWithItem: this.storeCoverWithItem,
       storeMetadataWithItem: this.storeMetadataWithItem,
       metadataFileFormat: this.metadataFileFormat,
